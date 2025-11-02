@@ -7,6 +7,7 @@ from agents.bg_task_agent.bg_task_agent import bg_task_agent
 from agents.chatbot import chatbot
 from agents.command_agent import command_agent
 from agents.github_mcp_agent.github_mcp_agent import github_mcp_agent
+from agents.esg_standards_agent import esg_standards_agent
 from agents.interrupt_agent import interrupt_agent
 from agents.knowledge_base_agent import kb_agent
 from agents.langgraph_supervisor_agent import langgraph_supervisor_agent
@@ -16,7 +17,7 @@ from agents.rag_assistant import rag_assistant
 from agents.research_assistant import research_assistant
 from schema import AgentInfo
 
-DEFAULT_AGENT = "research-assistant"
+DEFAULT_AGENT = "esg-standards-agent"
 
 # Type alias to handle LangGraph's different agent patterns
 # - @entrypoint functions return Pregel
@@ -32,6 +33,10 @@ class Agent:
 
 
 agents: dict[str, Agent] = {
+    "esg-standards-agent": Agent(
+        description="A GRi index agent.",
+        graph_like=esg_standards_agent
+    ),
     "chatbot": Agent(description="A simple chatbot.", graph_like=chatbot),
     "research-assistant": Agent(
         description="A research assistant with web search and calculator.",

@@ -1,5 +1,6 @@
 from enum import StrEnum
 from json import loads
+from pathlib import Path
 from typing import Annotated, Any
 
 from dotenv import find_dotenv
@@ -12,6 +13,10 @@ from pydantic import (
     computed_field,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 프로젝트 루트 디렉토리 찾기 (src/core/settings.py에서 상위 2단계)
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+ENV_FILE = PROJECT_ROOT / ".env"
 
 from schema.models import (
     AllModelEnum,
@@ -65,7 +70,7 @@ def check_str_is_http(x: str) -> str:
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=find_dotenv(),
+        env_file=str(ENV_FILE) if ENV_FILE.exists() else find_dotenv(),
         env_file_encoding="utf-8",
         env_ignore_empty=True,
         extra="ignore",

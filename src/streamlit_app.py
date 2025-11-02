@@ -23,10 +23,9 @@ from schema.task_data import TaskData, TaskDataStatus
 # The app heavily uses AgentClient to interact with the agent's FastAPI endpoints.
 
 
-APP_TITLE = "Agent Service Toolkit"
-APP_ICON = "🧰"
+APP_TITLE = "ESG AI Agent"
+APP_ICON = "🌱"
 USER_ID_COOKIE = "user_id"
-
 
 def get_or_create_user_id() -> str:
     """Get the user ID from session state or URL parameters, or create a new one if it doesn't exist."""
@@ -113,25 +112,50 @@ async def main() -> None:
     with st.sidebar:
         st.header(f"{APP_ICON} {APP_TITLE}")
 
-        ""
-        "Full toolkit for running an AI agent service built with LangGraph, FastAPI and Streamlit"
-        ""
+        st.caption("Built by 한국ESG데이터(주)")
+
+        # ""
+        # "Full toolkit for running an AI agent service built with LangGraph, FastAPI and Streamlit"
+        # ""
+
+        # Agent to use - 사이드바에 직접 표시
+        agent_list = [a.key for a in agent_client.info.agents]
+        agent_idx = agent_list.index(agent_client.info.default_agent)
+        agent_client.agent = st.selectbox(
+            "Agent to use",
+            options=agent_list,
+            index=agent_idx,
+        )
+
+        # LLM to use - 사이드바에 직접 표시
+        model_idx = agent_client.info.models.index(agent_client.info.default_model)
+        model = st.selectbox("LLM to use", options=agent_client.info.models, index=model_idx)
 
         if st.button(":material/chat: New Chat", use_container_width=True):
             st.session_state.messages = []
             st.session_state.thread_id = str(uuid.uuid4())
             st.rerun()
 
-        with st.popover(":material/settings: Settings", use_container_width=True):
-            model_idx = agent_client.info.models.index(agent_client.info.default_model)
-            model = st.selectbox("LLM to use", options=agent_client.info.models, index=model_idx)
-            agent_list = [a.key for a in agent_client.info.agents]
-            agent_idx = agent_list.index(agent_client.info.default_agent)
-            agent_client.agent = st.selectbox(
-                "Agent to use",
-                options=agent_list,
-                index=agent_idx,
+        @st.dialog("Share/resume chat")
+        def share_chat_dialog() -> None:
+            session = st.runtime.get_instance()._session_mgr.list_active_sessions()[0]
+            st_base_url = urllib.parse.urlunparse(
+                [session.client.request.protocol, session.client.request.host, "", "", "", ""]
             )
+            # if it's not localhost, switch to https by default
+            if not st_base_url.startswith("https") and "localhost" not in st_base_url:
+                st_base_url = st_base_url.replace("http", "https")
+            # Include both thread_id and user_id in the URL for sharing to maintain user identity
+            chat_url = (
+                f"{st_base_url}?thread_id={st.session_state.thread_id}&{USER_ID_COOKIE}={user_id}"
+            )
+            st.markdown(f"**Chat URL:**\n```text\n{chat_url}\n```")
+            st.info("Copy the above URL to share or revisit this chat")
+
+        if st.button(":material/upload: Share/resume chat", use_container_width=True):
+            share_chat_dialog()
+
+        with st.popover(":material/settings: Settings", use_container_width=True):
             use_streaming = st.toggle("Stream results", value=True)
 
             # Display user ID (for debugging or user information)
@@ -155,25 +179,6 @@ async def main() -> None:
                 "Prompts, responses and feedback in this app are anonymously recorded and saved to LangSmith for product evaluation and improvement purposes only."
             )
 
-        @st.dialog("Share/resume chat")
-        def share_chat_dialog() -> None:
-            session = st.runtime.get_instance()._session_mgr.list_active_sessions()[0]
-            st_base_url = urllib.parse.urlunparse(
-                [session.client.request.protocol, session.client.request.host, "", "", "", ""]
-            )
-            # if it's not localhost, switch to https by default
-            if not st_base_url.startswith("https") and "localhost" not in st_base_url:
-                st_base_url = st_base_url.replace("http", "https")
-            # Include both thread_id and user_id in the URL for sharing to maintain user identity
-            chat_url = (
-                f"{st_base_url}?thread_id={st.session_state.thread_id}&{USER_ID_COOKIE}={user_id}"
-            )
-            st.markdown(f"**Chat URL:**\n```text\n{chat_url}\n```")
-            st.info("Copy the above URL to share or revisit this chat")
-
-        if st.button(":material/upload: Share/resume chat", use_container_width=True):
-            share_chat_dialog()
-
         "[View the source code](https://github.com/JoshuaC215/agent-service-toolkit)"
         st.caption(
             "Made with :material/favorite: by [Joshua](https://www.linkedin.com/in/joshua-k-carroll/) in Oakland"
@@ -184,6 +189,8 @@ async def main() -> None:
 
     if len(messages) == 0:
         match agent_client.agent:
+            case "esg-standards-agent":
+                WELCOME = "안녕하세요! 저는 ESG Standards Agent 입니다. 현재는 GRI Standards 를 지원하고 있습니다."
             case "chatbot":
                 WELCOME = "Hello! I'm a simple chatbot. Ask me anything!"
             case "interrupt-agent":
