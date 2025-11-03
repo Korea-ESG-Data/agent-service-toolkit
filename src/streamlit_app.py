@@ -1,5 +1,6 @@
 import asyncio
 import os
+import tempfile
 import urllib.parse
 import uuid
 from collections.abc import AsyncGenerator
@@ -52,6 +53,7 @@ def get_or_create_user_id() -> str:
 
 
 async def main() -> None:
+    global os  # Explicitly declare os as global to avoid UnboundLocalError
     st.set_page_config(
         page_title=APP_TITLE,
         page_icon=APP_ICON,
@@ -80,10 +82,10 @@ async def main() -> None:
 
     if "agent_client" not in st.session_state:
         load_dotenv()
-        agent_url = os.getenv("AGENT_URL")
+        agent_url = os.environ.get("AGENT_URL")
         if not agent_url:
-            host = os.getenv("HOST", "0.0.0.0")
-            port = os.getenv("PORT", 8080)
+            host = os.environ.get("HOST", "0.0.0.0")
+            port = int(os.environ.get("PORT", 8080))
             agent_url = f"http://{host}:{port}"
         try:
             with st.spinner("Connecting to agent service..."):
@@ -126,6 +128,49 @@ async def main() -> None:
             options=agent_list,
             index=agent_idx,
         )
+
+        # File upload for ESG Standards Agent - 사이드바 맨 위로 이동
+        if agent_client.agent == "esg-standards-agent":
+            st.subheader("📄 지속가능경영보고서 업로드")
+            uploaded_file = st.file_uploader(
+                "PDF 파일을 업로드하세요",
+                type=["pdf"],
+                help="지속가능경영보고서 PDF 파일을 업로드하면, 해당 보고서 내용을 질문할 수 있습니다.",
+            )
+            
+            if uploaded_file is not None:
+                if st.button("업로드", use_container_width=True):
+                    with st.spinner("파일을 업로드하고 기존 ESG Standards DB에 추가하는 중..."):
+                        try:
+                            # Save uploaded file temporarily
+                            # Reset file pointer to beginning
+                            uploaded_file.seek(0)
+                            
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                                tmp_file.write(uploaded_file.getvalue())
+                                tmp_path = tmp_file.name
+                            
+                            # Upload to service
+                            result = agent_client.upload_report(
+                                file_path=tmp_path,
+                                thread_id=st.session_state.thread_id,
+                                user_id=user_id,
+                            )
+                            
+                            # Clean up temp file
+                            os.unlink(tmp_path)
+                            
+                            if result.get("status") == "success":
+                                st.success(f"✅ {uploaded_file.name} 업로드 완료!")
+                                st.info(f"총 {result.get('chunks_count', 0)}개의 청크로 벡터화되었습니다.")
+                                st.rerun()
+                            else:
+                                st.error("업로드 실패")
+                        except AgentClientError as e:
+                            st.error(f"업로드 오류: {e}")
+                        except Exception as e:
+                            st.error(f"예상치 못한 오류: {e}")
+            st.divider()
 
         # LLM to use - 사이드바에 직접 표시
         model_idx = agent_client.info.models.index(agent_client.info.default_model)
@@ -190,7 +235,18 @@ async def main() -> None:
     if len(messages) == 0:
         match agent_client.agent:
             case "esg-standards-agent":
-                WELCOME = "안녕하세요! 저는 ESG Standards Agent 입니다. 현재는 GRI Standards 를 지원하고 있습니다."
+                WELCOME = """안녕하세요! 저는 ESG Standards Agent 입니다. 
+
+현재는 GRI Standards를 지원하고 있으며, 지속가능경영보고서 파일을 업로드하시면 기존 ESG Standards DB에 추가되어 검색 가능합니다.
+
+**사용 방법:**
+1. 왼쪽 사이드바에서 PDF 파일을 업로드하세요 (기존 DB에 추가됩니다)
+2. GRI Standards와 업로드된 보고서에 대해 질문하세요
+
+예: 
+- "GRI 305는 무엇인가요?" (GRI Standards 질문)
+- "우리 회사의 탄소 배출량은?" (업로드된 보고서 질문)
+- "환경 경영 정책을 알려줘" (업로드된 보고서 질문)"""
             case "chatbot":
                 WELCOME = "Hello! I'm a simple chatbot. Ask me anything!"
             case "interrupt-agent":

@@ -1,13 +1,17 @@
 import inspect
 import json
 import logging
+import os
+import tempfile
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
+from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -32,6 +36,12 @@ from schema import (
     StreamInput,
     UserInput,
 )
+
+# Import functions for report processing
+import sys
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+from scripts.create_chroma_db import create_chroma_db
 from service.utils import (
     convert_message_content_to_string,
     langchain_to_chat_message,
@@ -423,6 +433,120 @@ async def health_check():
             health_status["langfuse"] = "disconnected"
 
     return health_status
+
+
+@router.post("/esg-standards-agent/upload-report")
+async def upload_report(
+    file: UploadFile = File(...),
+    thread_id: str | None = None,
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    """
+    지속가능경영보고서 파일을 업로드하고 벡터화합니다.
+    
+    업로드된 파일은 thread_id와 user_id를 기반으로 고유한 벡터 DB에 저장됩니다.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="파일명이 없습니다.")
+    
+    # PDF 파일만 허용
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="PDF 파일만 업로드 가능합니다.")
+    
+    # 기존 chroma_db_esg_standards에 저장
+    db_name = str(PROJECT_ROOT / "chroma_db_esg_standards")
+    db_exists = os.path.exists(db_name)
+    
+    # 업로드 메타데이터 생성
+    extra_metadata = {
+        "source_type": "uploaded_report",
+        "filename": file.filename,
+        "upload_timestamp": datetime.now().isoformat(),
+    }
+    if thread_id:
+        extra_metadata["uploaded_by"] = f"thread_{thread_id}"
+    elif user_id:
+        extra_metadata["uploaded_by"] = f"user_{user_id}"
+    
+    try:
+        # 임시 파일로 저장
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+            content = await file.read()
+            tmp_file.write(content)
+            tmp_file_path = tmp_file.name
+        
+        # 벡터 DB 생성 또는 업데이트
+        # 임시 디렉토리 생성
+        temp_dir = tempfile.mkdtemp()
+        temp_file_in_dir = os.path.join(temp_dir, file.filename)
+        os.rename(tmp_file_path, temp_file_in_dir)
+        
+        logger.info(f"Uploading report to ESG Standards DB: {db_name}, exists: {db_exists}")
+        
+        # 벡터화 실행 - 기존 DB의 uploaded_reports_collection에 추가
+        # GRI 표준은 esg_standards_collection, 업로드된 보고서는 uploaded_reports_collection으로 분리
+        report_collection_name = "uploaded_reports_collection"
+        chroma = create_chroma_db(
+            folder_path=temp_dir,
+            db_name=db_name,  # 절대 경로 사용
+            delete_chroma_db=False,  # 기존 DB에 추가 (절대 삭제하지 않음)
+            recursive=False,
+            chunk_size=2000,
+            overlap=500,
+            extra_metadata=extra_metadata,
+            collection_name=report_collection_name,  # 보고서 전용 컬렉션
+        )
+        
+        logger.info(f"Report uploaded successfully. DB path: {db_name}, Collection: {report_collection_name}")
+        
+        # 벡터화 완료 후 DB 존재 여부 확인
+        if not os.path.exists(db_name):
+            raise HTTPException(
+                status_code=500,
+                detail=f"벡터 데이터베이스 생성에 실패했습니다. 경로: {db_name}"
+            )
+        
+        # 업로드된 컬렉션에서 문서 개수 확인 및 검증
+        chunks_count = 0
+        try:
+            # 같은 컬렉션에서 검색하여 업로드가 제대로 되었는지 확인
+            retriever = chroma.as_retriever(search_kwargs={"k": 10})
+            test_query = "test"
+            docs = retriever.invoke(test_query)
+            chunks_count = len(docs) if docs else 0
+            
+            # 최근 업로드된 문서가 포함되어 있는지 확인
+            uploaded_found = False
+            for doc in docs:
+                if doc.metadata.get("source_type") == "uploaded_report":
+                    uploaded_found = True
+                    break
+            
+            if not uploaded_found and chunks_count > 0:
+                logger.warning(f"Uploaded report not found in collection. Total chunks: {chunks_count}")
+            elif uploaded_found:
+                logger.info(f"Uploaded report verified in collection. Total chunks: {chunks_count}")
+        except Exception as e:
+            logger.error(f"Error verifying uploaded report in collection: {e}")
+            chunks_count = 0
+        
+        # 임시 파일 및 디렉토리 정리
+        try:
+            os.remove(temp_file_in_dir)
+            os.rmdir(temp_dir)
+        except Exception:
+            pass
+        
+        return {
+            "status": "success",
+            "message": "보고서가 성공적으로 업로드되고 기존 ESG Standards DB에 추가되었습니다.",
+            "db_path": db_name,
+            "filename": file.filename,
+            "chunks_count": chunks_count,
+        }
+    except Exception as e:
+        logger.error(f"Error uploading report: {e}")
+        raise HTTPException(status_code=500, detail=f"파일 처리 중 오류가 발생했습니다: {str(e)}")
 
 
 app.include_router(router)

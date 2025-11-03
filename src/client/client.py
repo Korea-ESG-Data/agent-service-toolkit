@@ -360,3 +360,92 @@ class AgentClient:
             raise AgentClientError(f"Error: {e}")
 
         return ChatHistory.model_validate(response.json())
+
+    async def aupload_report(
+        self,
+        file_path: str,
+        thread_id: str | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Upload a sustainability report PDF file.
+
+        Args:
+            file_path: Path to the PDF file to upload
+            thread_id: Thread ID for associating the report with a conversation
+            user_id: User ID for associating the report with a user
+
+        Returns:
+            dict containing upload status and metadata
+        """
+        import os
+
+        if not os.path.exists(file_path):
+            raise AgentClientError(f"File not found: {file_path}")
+
+        with open(file_path, "rb") as f:
+            files = {"file": (os.path.basename(file_path), f, "application/pdf")}
+            data = {}
+            if thread_id:
+                data["thread_id"] = thread_id
+            if user_id:
+                data["user_id"] = user_id
+
+            async with httpx.AsyncClient() as client:
+                try:
+                    response = await client.post(
+                        f"{self.base_url}/esg-standards-agent/upload-report",
+                        files=files,
+                        data=data,
+                        headers=self._headers,
+                        timeout=self.timeout,
+                    )
+                    response.raise_for_status()
+                except httpx.HTTPError as e:
+                    raise AgentClientError(f"Error uploading file: {e}")
+
+        return response.json()
+
+    def upload_report(
+        self,
+        file_path: str,
+        thread_id: str | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Upload a sustainability report PDF file synchronously.
+
+        Args:
+            file_path: Path to the PDF file to upload
+            thread_id: Thread ID for associating the report with a conversation
+            user_id: User ID for associating the report with a user
+
+        Returns:
+            dict containing upload status and metadata
+        """
+        import os
+
+        if not os.path.exists(file_path):
+            raise AgentClientError(f"File not found: {file_path}")
+
+        with open(file_path, "rb") as f:
+            files = {"file": (os.path.basename(file_path), f, "application/pdf")}
+            data = {}
+            if thread_id:
+                data["thread_id"] = thread_id
+            if user_id:
+                data["user_id"] = user_id
+
+            try:
+                response = httpx.post(
+                    f"{self.base_url}/esg-standards-agent/upload-report",
+                    files=files,
+                    data=data,
+                    headers=self._headers,
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+            except httpx.HTTPError as e:
+                raise AgentClientError(f"Error uploading file: {e}")
+
+        return response.json()
